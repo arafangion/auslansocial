@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Sydney Auslan Social</title>
+    <link rel="stylesheet" type="text/css" href="main.css">
+</head>
+<body>
+    <div class="heading">
+    <div class="heading-content">
+        <h1>Sydney Auslan Social</h1>
+        <div class="slogan">Make the signs! Show the signs!</div>
+        <p>This is a test instance whilst the owner is considering event pages that do not require Facebook.
+        <p>We welcome everybody who wants to practice their Auslan, and also to socialize!
+    </div>
+    </div>
+
+    <div class="content">
+    <div class="events section">
+        <h1>Featured Events</h1>
+
+        {% for event in events %}
+        <div class="event">
+            <h2>{{ event.name }}</h2>
+            <div class="date">
+                <span class="month">{{ event.month }}</span>
+                <span class="day">{{ event.day }}</span>
+            </div>
+            {{ event.html|raw }}
+            <div class="graphic-content">
+                <iframe width="300" height="350" frameborder="0" scrolling="no" marginheight="0" marginwidth="0" src="{{ event.map }}" style="border: 1px solid black"></iframe><br/><small><a href="{{ event.mapLarge }}">View Larger Map</a></small>
+            </div>
+            <div class="graphic-content">
+                <iframe width="460" height="315" src="{{ event.video }}" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+            </div>
+            <br>
+            {% endfor %}
+        </div>
+    </div>
+    <div class="resources section">
+        <h1>Resources</h1>
+
+        <ol>
+            <li><a href="https://www.auslan.org.au">Auslan Signbank</a></li>
+            <li><a href="https://www.facebook.com/groups/263818821078143/?ref=share">Inner West Auslan Social ("IWAS")</a></li>
+            <li><a href="https://www.facebook.com/groups/527034314833439/?ref=share">South West Auslan Social ("SWAS")</a></li>
+            <li><a href="https://www.auslananywhere.com.au/discover">Auslan Anywhere</a></li>
+        </ol>
+    </div>
+    </div>
+
+    <div class="footer">
+{#
+        <h3>Todo:</h3>
+        <ol>
+            <li>When regenerating the site, if there is a new featured event within the week, advertise it on telegram and facebook</li>
+            <li>Add video to the events</li>
+            <li>Describe the resources.</li>
+            <li>Make it easy for people to add a resource, video, or event, from telegram.</li>
+            <li>Make it clearer and easier for people to contact.  Add an introductory video?</li>
+            <li>Oh, and obviously flesh out the 'events' and 'resources' page.  We also want a per-event page.</li>
+        </ol>
+        #}
+
+        <small>Site Admin: John - contact him in the telegram channel</small>
+    </div>
