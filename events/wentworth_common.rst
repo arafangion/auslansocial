@@ -1,12 +1,13 @@
 ---
-date: "2021-05-15"
-month: May
-day: 15
+date: "2021-06-12"
+month: June
+day: 12
 name: Saturday Meet!
 address: Wentworth Common
 map: "https://www.openstreetmap.org/export/embed.html?bbox=151.07168912887576%2C-33.83863870684814%2C151.07619524002078%2C-33.83563994485949&amp;layer=mapnik"
 mapLarge: "https://www.openstreetmap.org/#map=18/-33.83714/151.07394"
-video: "https://www.youtube.com/embed/vPzfyJ-4hUg"
+#video: "https://www.youtube.com/embed/vPzfyJ-4hUg"
+summary: BBQ at Wentworth Common at 11 AM on Saturday 15th May!
 ---
 Come join us at the BBQ's in Wentworth Common on Saturday 15th May from 11 AM to 12:30 PM for a social chat!
 
