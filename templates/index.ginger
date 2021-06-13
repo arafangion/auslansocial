@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <title>Sydney Auslan Social</title>
-    <link rel="stylesheet" type="text/css" href="/example.css">
+    <link rel="stylesheet" type="text/css" href="sitemain.css">
     <meta name="twitter:description" property="og:description" itemprop="description" content="We welcome everybody who wants to practice their Auslan, and also to socialize!" />
 </head>
 <body>
@@ -21,11 +21,12 @@
 
         {% for event in events %}
            <div class="event">
-              <h2>{{ event.name }}</h2>
+              <h2>{{ event.name }}!</h2>
               <div class="date">
                   <span class="month">{{ event.month }}</span>
                   <span class="day">{{ event.day }}</span>
               </div>
+              <small><a href="{{ event.url }}">Permanent Link</a></small>
               {{ event.html|raw }}
               {{ if (event.map) }}
               <div class="graphic-content">

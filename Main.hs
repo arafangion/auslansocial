@@ -6,7 +6,7 @@ import qualified Data.ByteString.Lazy          as L
 import qualified Data.ByteString.Lazy.Search   as S
 import qualified Data.Yaml                     as Y
 import qualified Data.Hashable                 as Hashable
-import           Data.HashMap.Strict            ( HashMap )
+import           Data.HashMap.Strict            ( HashMap, (!?), (!) )
 import qualified Data.HashMap.Strict           as HashMap
 import           Data.Text.Encoding             ( decodeUtf8
                                                 , encodeUtf8
@@ -17,6 +17,7 @@ import           Data.Text
 import           Data.Time.Clock.System         ( getSystemTime, systemSeconds )
 import           Data.Default                   ( def )
 import           Data.Either
+import           Data.Time                     hiding (dayOfWeek)
 import           Text.Pandoc
 import           Data.Aeson
 import           Control.Monad.Identity         ( Identity
@@ -26,7 +27,8 @@ import           Control.Monad.Identity         ( Identity
                                                 )
 import           Text.Ginger
 import           Text.Ginger.Html               ( htmlSource )
-import           Text.Blaze
+import           Text.Blaze                    hiding ((!?), (!))
+import           Text.Inflections              ( ordinalize )
 import qualified Data.Vector                   as Vector
 import           System.Directory
 import qualified Control.Monad.Extra           as Extra
@@ -42,9 +44,11 @@ import           Control.Lens
 import           System.Log.FastLogger
 import           System.IO
 import           System.FilePath
+import           System.Environment
 import           Control.Monad.Trans.Resource
 import           Control.Monad.Trans.AWS
 import           Control.Monad.IO.Class
+import           Control.Monad.Error.Class
 
 data Content = FrontMatterContent { fmmetadata :: HashMap Text Y.Value , lit :: Text }
 
@@ -63,15 +67,66 @@ render template contextMap =
       context = makeContextHtml contextLookup
   in htmlSource $ runGinger context template
 
+fromValue :: Maybe Value -> Text
+fromValue v = case v of
+                Just (String v) -> v
+                otherwise -> "(Missing)"
+
+eventName :: HashMap Text Y.Value -> Text
+eventName md = fromValue $ md !? "name"
+address :: HashMap Text Y.Value -> Text
+address md = fromValue $ md !? "address"
+dayNameOfWeek :: Maybe LocalTime -> Text
+dayNameOfWeek d =
+    maybe "Missing" (\x -> pack $ formatTime defaultTimeLocale "%A" x) d
+monthName :: Maybe LocalTime -> Text
+monthName d =
+    maybe "Missing" (\x -> pack $ formatTime defaultTimeLocale "%B" x) d
+dayOrdOfWeek :: Maybe LocalTime -> Text
+dayOrdOfWeek Nothing = ""
+dayOrdOfWeek (Just d) = 
+  let
+    getOrdDay (year, month, day) = ordinalize day
+  in
+    getOrdDay $ toGregorian (localDay d)
+dayOfWeek :: Maybe LocalTime -> Text
+dayOfWeek Nothing = ""
+dayOfWeek (Just d) = 
+  let
+    getOrdDay (year, month, day) = pack $ show day
+  in
+    getOrdDay $ toGregorian (localDay d)
+
+
 loadSource :: FilePath -> IO Value
 loadSource path = do
     event <- parseContent <$> L.readFile path
+    let md = fmmetadata event
+    let eventDate =
+          parseTimeM True defaultTimeLocale "%Y-%-m-%-d" $ unpack (fromValue $ md !? "date") :: Maybe LocalTime
+    let
+      md' = md <> HashMap.fromList
+              [ ("url", String . pack $ pathToRealUrlPath path (Object md))
+              , ("dayOrd", String $ dayOrdOfWeek eventDate)
+              , ("dayName", String $ dayNameOfWeek eventDate)
+              , ("day", String $ dayOfWeek eventDate)
+              , ("month", String $ monthName eventDate)
+              , ("summary", String $ eventName md 
+                                     <> " at "
+                                     <> address md
+                                     <> " on "
+                                     <> dayNameOfWeek eventDate
+                                     <> " "
+                                     <> dayOrdOfWeek eventDate
+                                     <> " "
+                                     <> monthName eventDate
+                                     <> "!")
+              ]
     html <- HashMap.fromList <$>
-              either 
-                (const [])
-                (\x -> [("html", String x), ("url", String . pack $ pathToRealUrlPath path (Object $ fmmetadata event))])
-              <$> toHtml event
-    pure . Object $ fmmetadata event <> html
+              (either (const []) (\x -> [ ("html", String x) ])
+                <$> toHtml (FrontMatterContent md' (lit event))
+              )
+    pure . Object $ md' <> html
 
 loadSourcesFrom :: FilePath -> IO [(FilePath, Value)]
 loadSourcesFrom location = do
@@ -81,9 +136,14 @@ loadSourcesFrom location = do
     path x = location <> "/" <> x
 
 toHtml :: Content -> IO (Either PandocError Text)
-toHtml (FrontMatterContent _ lit) = runIO $ do
+toHtml (FrontMatterContent fm lit) = runIO $ do
     doc <- readRST def lit
-    writeHtml5String def doc
+    html <- unpack <$> writeHtml5String def doc
+    template <- liftIO $ parseGinger gingerResolver Nothing html
+    case template of
+      Left e -> do
+        throwError $ PandocSomeError . pack $ show e
+      Right t -> pure $ render t fm
 
 toText :: L.ByteString -> Text
 toText = decodeUtf8 . L.toStrict
@@ -100,11 +160,19 @@ parseFrontMatterContent yaml lit = FrontMatterContent yaml' (toText lit)
     where
         yaml' = either (const HashMap.empty) id $ Y.decodeEither' (L.toStrict yaml)
 
+valueToDateSuffix :: Value -> String
+valueToDateSuffix (Object v) = unpack $ maybe "" (\(String x) -> "-" <> x) $ v !? "date"
+
 pathToLocalUrlPath :: String -> Value -> String
-pathToLocalUrlPath a md = "html/" <> a -<.> "html"
+pathToLocalUrlPath a md = "html/" <> pathToRealUrlPath a md
 
 pathToRealUrlPath :: String -> Value -> String
-pathToRealUrlPath a md = a -<.> "html"
+pathToRealUrlPath a md = (dropExtension a) <> valueToDateSuffix md <> ".html"
+
+printTemplateError error = do
+  TIO.putStrLn "There was some error loading the template:"
+  print error
+  Prelude.putStrLn $ peErrorMessage error
 
 main :: IO ()
 main = do
@@ -116,21 +184,15 @@ main = do
         , ("resources", Array $ Vector.fromList $ Prelude.map snd resourceItems)
         ]
 
+  createDirectoryIfMissing True "html/events"
   indexFile <- template "templates/index.ginger"
-  either
-    (\error -> do
-      TIO.putStrLn "There was some error loading the template for index.ginger:"
-      print error
-      Prelude.putStrLn $ peErrorMessage error
-    )
+  either printTemplateError
     (\x -> L.writeFile "html/index.html" . L.fromStrict . encodeUtf8 $ render x context)
     indexFile
 
   eventsTemplate <- template "templates/event.ginger"
-  either
-    (const $ pure ())
+  either printTemplateError
     (\x -> do
-      createDirectoryIfMissing True "html/events"
       forM_ eventItems $ \((path, obj)) -> do
         L.writeFile
           (pathToLocalUrlPath path obj) 
@@ -153,7 +215,7 @@ main = do
     css = "text/css"
     files :: [ (String, String, Text) ]
     files = [ ("html/index.html", "index.html", html)
-            , ("html/main.css", "main.css", css)
+            , ("css/sitemain.css", "sitemain.css", css)
             ] <> Prelude.map (\((a, b)) -> (pathToLocalUrlPath a b, pathToRealUrlPath a b, html)) eventItems
     c = ChunkSize 1024*1024
     say = liftIO . TIO.putStrLn
@@ -161,13 +223,18 @@ main = do
               & pItems .~ (Prelude.map (\((_, a, _)) -> "/" <> Data.toText a) files)
     invalidations = invalidationBatch batch invalidationId
 
-  runResourceT . runAWST env $ do
-    forM_ files $ \((f, k, m)) -> do
-      bdy <- chunkedFile c f
-      void . send $ (putObject b (ObjectKey $ pack k) bdy) & poContentType .~ Just m
-      say $ "Successfully Uploaded: "
-         <> Data.toText f <> " to " <> Data.toText b <> " - " <> Data.toText k
-    send $ createInvalidation distributionId invalidations
 
-  pure ()
+  args <- getArgs
+  if "--push" `elem` args then do
+    runResourceT . runAWST env $ do
+      forM_ files $ \((f, k, m)) -> do
+        bdy <- chunkedFile c f
+        void . send $ (putObject b (ObjectKey $ pack k) bdy) & poContentType .~ Just m
+        say $ "Successfully Uploaded: "
+           <> Data.toText f <> " to " <> Data.toText b <> " - " <> Data.toText k
+      send $ createInvalidation distributionId invalidations
+
+    pure ()
+  else
+    print "Run this with --push if you want to push the results up!"
 
