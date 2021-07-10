@@ -210,12 +210,13 @@ main = do
   let
     invalidationId = "invalidation " <> (pack . show $ systemTime)
     distributionId = "E1N5IONLD4WMAF"
-    b = "auslansocial.com"
+    b = "auslansocial.com" :: Text
+    b' = BucketName b
     html = "text/html"
     css = "text/css"
     files :: [ (String, String, Text) ]
     files = [ ("html/index.html", "index.html", html)
-            , ("css/sitemain.css", "sitemain.css", css)
+            , ("html/sitemain.css", "sitemain.css", css)
             ] <> Prelude.map (\((a, b)) -> (pathToLocalUrlPath a b, pathToRealUrlPath a b, html)) eventItems
     c = ChunkSize 1024*1024
     say = liftIO . TIO.putStrLn
@@ -229,12 +230,14 @@ main = do
     runResourceT . runAWST env $ do
       forM_ files $ \((f, k, m)) -> do
         bdy <- chunkedFile c f
-        void . send $ (putObject b (ObjectKey $ pack k) bdy) & poContentType .~ Just m
+        void . send $ (putObject b' (ObjectKey $ pack k) bdy) & poContentType .~ Just m
         say $ "Successfully Uploaded: "
-           <> Data.toText f <> " to " <> Data.toText b <> " - " <> Data.toText k
+           <> Data.toText f <> " to " <> Data.toText b' <> " - " <> Data.toText k
       send $ createInvalidation distributionId invalidations
 
     pure ()
   else
     print "Run this with --push if you want to push the results up!"
+
+  TIO.putStrLn $ "\n\thttps://" <> b <> "\n"
 

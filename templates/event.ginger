@@ -5,7 +5,11 @@
     <title>Sydney Auslan Social -- {{ event.name }}!</title>
     <link rel="stylesheet" type="text/css" href="../sitemain.css">
     <meta name="twitter:description" property="og:description" itemprop="description" content="{{ event.summary }}" />
+    <meta property="og:description"content="{{ event.summary }}" />
+    <meta property="og:title" content="{{ event.summary }}" />
+    <meta property="og:type" content="website" />
     <meta property="og:video" content="{{ event.video }}" />
+    <meta property="og:url" content="{{ event.url }}" />
 </head>
 <body>
     <div class="heading">
