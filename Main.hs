@@ -1,5 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeApplications #-}
 module Main where
 
 import qualified Data.ByteString.Lazy          as L
@@ -13,13 +15,14 @@ import           Data.Text.Encoding             ( decodeUtf8
                                                 )
 import           Data.Text.IO                  as TIO
                                                 ( putStrLn )
-import           Data.Text
+import           Data.Text                     hiding (elem)
 import           Data.Time.Clock.System         ( getSystemTime, systemSeconds )
 import           Data.Default                   ( def )
 import           Data.Either
 import           Data.Time                     hiding (dayOfWeek)
 import           Text.Pandoc
 import           Data.Aeson
+import           Data.Aeson.KeyMap             as KeyMap
 import           Control.Monad.Identity         ( Identity
                                                 , runIdentity
                                                 , forM_
@@ -32,28 +35,29 @@ import           Text.Inflections              ( ordinalize )
 import qualified Data.Vector                   as Vector
 import           System.Directory
 import qualified Control.Monad.Extra           as Extra
-import           Network.AWS.Auth
-import qualified Network.AWS.Data              as Data
-import           Network.AWS.S3
-import           Network.AWS.CloudFront
-import           Network.AWS.CloudFront.Types
-import           Network.AWS.Env
-import           Network.AWS.Types
 import           Control.Lens.Lens
 import           Control.Lens
+import           Data.Generics.Product        (field)
 import           System.Log.FastLogger
 import           System.IO
 import           System.FilePath
 import           System.Environment
 import           Control.Monad.Trans.Resource
-import           Control.Monad.Trans.AWS
 import           Control.Monad.IO.Class
 import           Control.Monad.Error.Class
 
+import          Amazonka
+import          Amazonka.S3
+import          Amazonka.Env
+import          Amazonka.Discovery
+import          Amazonka.Data.Text (ToText(..))
+import          Amazonka.CloudFront.Types         (paths, newInvalidationBatch, newPaths)
+
 data Content = FrontMatterContent { fmmetadata :: HashMap Text Y.Value , lit :: Text }
 
+
 gingerResolver :: FilePath -> IO (Maybe String)
-gingerResolver source = L.readFile source >>= return . Just . unpack . toText
+gingerResolver source = L.readFile source >>= return . Just . unpack . toText . L.toStrict
 
 template :: FilePath -> IO (Either ParserError (Text.Ginger.Template SourcePos))
 template = parseGingerFile gingerResolver
@@ -106,7 +110,7 @@ loadSource path = do
           parseTimeM True defaultTimeLocale "%Y-%-m-%-d" $ unpack (fromValue $ md !? "date") :: Maybe LocalTime
     let
       md' = md <> HashMap.fromList
-              [ ("url", String . pack $ pathToRealUrlPath path (Object md))
+              [ ("url", String . pack $ pathToRealUrlPath path (Object $ fromHashMapText md))
               , ("dayOrd", String $ dayOrdOfWeek eventDate)
               , ("dayName", String $ dayNameOfWeek eventDate)
               , ("day", String $ dayOfWeek eventDate)
@@ -126,7 +130,7 @@ loadSource path = do
               (either (const []) (\x -> [ ("html", String x) ])
                 <$> toHtml (FrontMatterContent md' (lit event))
               )
-    pure . Object $ md' <> html
+    pure . Object $ fromHashMapText md' <> fromHashMapText html
 
 loadSourcesFrom :: FilePath -> IO [(FilePath, Value)]
 loadSourcesFrom location = do
@@ -145,23 +149,20 @@ toHtml (FrontMatterContent fm lit) = runIO $ do
         throwError $ PandocSomeError . pack $ show e
       Right t -> pure $ render t fm
 
-toText :: L.ByteString -> Text
-toText = decodeUtf8 . L.toStrict
-
 parseContent :: L.ByteString -> Content
-parseContent content = maybe (FrontMatterContent HashMap.empty $ toText content) id $ do
+parseContent content = maybe (FrontMatterContent HashMap.empty $ toText $ L.toStrict content) id $ do
                                 rest <- L.stripPrefix "---" content
                                 let (yaml', content') = S.breakOn "---" rest
                                 body <- L.stripPrefix "---" content'
                                 pure $ parseFrontMatterContent yaml' body
 
 parseFrontMatterContent :: L.ByteString -> L.ByteString -> Content
-parseFrontMatterContent yaml lit = FrontMatterContent yaml' (toText lit)
+parseFrontMatterContent yaml lit = FrontMatterContent yaml' (toText $ L.toStrict lit)
     where
         yaml' = either (const HashMap.empty) id $ Y.decodeEither' (L.toStrict yaml)
 
 valueToDateSuffix :: Value -> String
-valueToDateSuffix (Object v) = unpack $ maybe "" (\(String x) -> "-" <> x) $ v !? "date"
+valueToDateSuffix (Object v) = unpack $ maybe "" (\(String x) -> "-" <> x) $ KeyMap.lookup "date" v
 
 pathToLocalUrlPath :: String -> Value -> String
 pathToLocalUrlPath a md = "html/" <> pathToRealUrlPath a md
@@ -204,7 +205,7 @@ main = do
     )
     eventsTemplate
 
-  env <- newEnv Discover <&> set envRegion NorthVirginia
+  env <- newEnv Discover -- <&> set (field @"envRegion") NorthVirginia
   systemTime <- systemSeconds <$> getSystemTime
 
   let
@@ -219,21 +220,26 @@ main = do
             , ("html/sitemain.css", "sitemain.css", css)
             ] <> Prelude.map (\((a, b)) -> (pathToLocalUrlPath a b, pathToRealUrlPath a b, html)) eventItems
     c = ChunkSize 1024*1024
+
+    say :: Text -> IO ()
     say = liftIO . TIO.putStrLn
-    batch = paths ( Prelude.length files )
-              & pItems .~ (Prelude.map (\((_, a, _)) -> "/" <> Data.toText a) files)
-    invalidations = invalidationBatch batch invalidationId
+    
+    paths = (Prelude.map (\((_, a, _)) -> "/" <> toText a) files)
+
+    invalidations = newInvalidationBatch
+                      (newPaths (Prelude.length paths) & field @"items" .~ Just paths)
+                      "anInvalidationID"
 
 
   args <- getArgs
   if "--push" `elem` args then do
-    runResourceT . runAWST env $ do
-      forM_ files $ \((f, k, m)) -> do
-        bdy <- chunkedFile c f
-        void . send $ (putObject b' (ObjectKey $ pack k) bdy) & poContentType .~ Just m
-        say $ "Successfully Uploaded: "
-           <> Data.toText f <> " to " <> Data.toText b' <> " - " <> Data.toText k
-      send $ createInvalidation distributionId invalidations
+    --runResourceT . runAWST env $ do
+    --  forM_ files $ \((f, k, m)) -> do
+    --    bdy <- chunkedFile c f
+    --    void . send $ (putObject b' (pack k) bdy) & poContentType .~ Just m
+    --    say $ "Successfully Uploaded: "
+    --       <> toText f <> " to " <> toText b' <> " - " <> toText k
+    --  send $ createInvalidation distributionId invalidations
 
     pure ()
   else

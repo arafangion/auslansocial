@@ -35,17 +35,24 @@ executable sydneyauslan
                      , blaze-markup
                      , unordered-containers
                      , mtl
-                     , aeson >= 1.5 && < 2.0
+                     , aeson >= 1.5
                      , hashable
                      , extra
                      , directory
                      , vector
-                     , amazonka >= 1.6.1
+                     , amazonka >= 2.0
+                     , amazonka-core
+                     , amazonka-cloudfront
+                     , amazonka-s3
+                     , amazonka-discovery
                      , lens
+                     , generic-lens
                      , resourcet
                      , filepath
                      , fast-logger
                      , time
                      , inflections
+                     , transformers
+                     , syb
   -- hs-source-dirs:
   default-language:    Haskell2010
