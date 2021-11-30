@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ViewPatterns #-}
 module Main where
 
 import qualified Data.ByteString.Lazy          as L
@@ -52,6 +53,7 @@ import          Amazonka.Env
 import          Amazonka.Discovery
 import          Amazonka.Data.Text (ToText(..))
 import          Amazonka.CloudFront.Types         (paths, newInvalidationBatch, newPaths)
+import          Amazonka.CloudFront         (newCreateInvalidation)
 
 data Content = FrontMatterContent { fmmetadata :: HashMap Text Y.Value , lit :: Text }
 
@@ -205,7 +207,8 @@ main = do
     )
     eventsTemplate
 
-  env <- newEnv Discover -- <&> set (field @"envRegion") NorthVirginia
+  lgr <- newLogger Trace stdout
+  env <- newEnv Discover <&> set (field @"envLogger") lgr . set (field @"envRegion") NorthVirginia
   systemTime <- systemSeconds <$> getSystemTime
 
   let
@@ -230,16 +233,18 @@ main = do
                       (newPaths (Prelude.length paths) & field @"items" .~ Just paths)
                       "anInvalidationID"
 
+    invalidation = newCreateInvalidation distributionId invalidations
+
 
   args <- getArgs
   if "--push" `elem` args then do
-    --runResourceT . runAWST env $ do
-    --  forM_ files $ \((f, k, m)) -> do
-    --    bdy <- chunkedFile c f
-    --    void . send $ (putObject b' (pack k) bdy) & poContentType .~ Just m
-    --    say $ "Successfully Uploaded: "
-    --       <> toText f <> " to " <> toText b' <> " - " <> toText k
-    --  send $ createInvalidation distributionId invalidations
+    runResourceT $ do
+      forM_ files $ \((f, k, m)) -> do
+        bdy <- chunkedFile c f
+        send env $ newPutObject b' (ObjectKey $ pack k) bdy & set (field @"contentType") (Just m)
+        liftIO $ say $ "Successfully Uploaded: "
+          <> toText f <> " to " <> toText b' <> " - " <> toText k
+        send env invalidation
 
     pure ()
   else
